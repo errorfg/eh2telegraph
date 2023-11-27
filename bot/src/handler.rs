@@ -408,6 +408,14 @@ where
                     .await
                     .map_err(anyhow::Error::from)
             }
+            "nhentai.xxx" => {
+                let path = path.replace("nhentai.xxx", "nhentai.net");
+                info!("[registry] sync nhentai for path {}", path);
+                self.synchronizer
+                    .sync::<NHCollector>(path)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
             _ => Err(anyhow::anyhow!("no matching collector")),
         }
     }
