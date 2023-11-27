@@ -1,6 +1,7 @@
 FROM rust:1-bullseye as builder
 WORKDIR /usr/src/eh2telegraph
 COPY . .
+RUN cargo update
 RUN cargo build --release
 
 FROM debian:bullseye-slim

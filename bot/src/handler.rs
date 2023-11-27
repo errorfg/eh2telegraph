@@ -188,7 +188,8 @@ where
                 .flatten();
             msg.text()
                 .and_then(|content| {
-                    Synchronizer::match_url_from_text(content).map(ToOwned::to_owned)
+                    let processed_content = content.replace("nhentai.xxx", "nhentai.net");
+                    Synchronizer::match_url_from_text(&processed_content).map(ToOwned::to_owned)
                 })
                 .into_iter()
                 .chain(entries)
@@ -243,7 +244,8 @@ where
                     continue;
                 }
             };
-            let url = if let Some(c) = Synchronizer::match_url_from_url(&url) {
+            let replaced_url = url.replace("nhentai.xxx", "nhentai.net");
+            let url = if let Some(c) = Synchronizer::match_url_from_url(&replaced_url) {
                 c
             } else {
                 continue;
