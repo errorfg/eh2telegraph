@@ -1,4 +1,4 @@
-/// ImageBuffer for upload in batch.
+/// ImageBuffer for upload in batch. ceshi
 pub struct ImageBuffer<T> {
     buf: Vec<T>,
     size: usize,
