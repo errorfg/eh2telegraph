@@ -233,33 +233,97 @@ where
         IT: IntoIterator<Item = I>,
         I: Into<Cow<'static, [u8]>>,
     {
-        let mut form = Form::new();
-        let mut cnt = 0;
-        for (idx, data) in files.into_iter().enumerate() {
-            let part = Part::bytes(data).file_name(idx.to_string());
-            form = form.part(idx.to_string(), part);
-            cnt += 1;
+        use futures::stream::{self, StreamExt};
+
+        // R2 configuration
+        // Replace these values with your own Cloudflare R2 credentials
+        const R2_CONFIG: R2Config = R2Config {
+            // Your Cloudflare account ID
+            // Example: "b6589fc6ab0dc82cf12099d1c2d40ab994e8410c"
+            account_id: "your_account_id",
+
+            // R2 Access Key ID from R2 dashboard > Manage R2 API Tokens
+            // Example: "54aa49281e6e4f678d1dcd3a49228c98"
+            access_key_id: "your_access_key_id",
+
+            // R2 Secret Access Key
+            // Example: "77e7c1bf5c48e4da27c5070e7a828c56c11cd6ee"
+            secret_key: "your_secret_key",
+
+            // Your R2 bucket name
+            // Example: "my-images"
+            bucket_name: "your_bucket_name",
+
+            // Your CDN domain for the bucket
+            // Example: "cdn.yourdomain.com" or "example.r2.dev"
+            cdn_domain: "your.cdn.domain",
+        };
+        
+        let endpoint = format!("https://{}.r2.cloudflarestorage.com", R2_CONFIG.account_id);
+        
+        let r2_config = aws_sdk_s3::Config::builder()
+            .endpoint_url(endpoint)
+            .region(aws_types::region::Region::new("auto"))
+            .credentials_provider(aws_credential_types::Credentials::new(
+                R2_CONFIG.access_key_id,
+                R2_CONFIG.secret_key,
+                None,
+                None,
+                "r2-credentials",
+            ))
+            .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
+            .build();
+    
+        let r2_client = aws_sdk_s3::Client::from_conf(r2_config);
+        
+        let results = stream::iter(files)
+            .map(|file| {
+                let r2_client = r2_client.clone();
+                async move {
+                    let file_data: Cow<'static, [u8]> = file.into();
+                    let file_ext = infer::get(&file_data)
+                        .map(|t| t.extension())
+                        .unwrap_or("bin");
+    
+                    // 使用 uuid 作为文件名
+                    let key = format!("{}.{}", uuid::Uuid::new_v4(), file_ext);
+                    let bytes = bytes::Bytes::from(file_data.into_owned());
+                    let body = aws_sdk_s3::primitives::ByteStream::from(bytes);
+                    
+                    // 使用 S3 的 PUT 操作，它会自动生成 ETag 并处理重复问题
+                    match r2_client
+                        .put_object()
+                        .bucket(R2_CONFIG.bucket_name)
+                        .key(&key)
+                        .body(body)
+                        .content_type(format!("image/{}", file_ext))
+                        .send()
+                        .await
+                    {
+                        Ok(_) => Ok(MediaInfo {
+                            src: format!("https://{}/{}", R2_CONFIG.cdn_domain, key)
+                        }),
+                        Err(e) => {
+                            log::error!("Failed to upload file {}: {:?}", key, e);
+                            Err(TelegraphError::Server)
+                        }
+                    }
+                }
+            })
+            .buffer_unordered(10)
+            .collect::<Vec<Result<MediaInfo, TelegraphError>>>()
+            .await;
+        
+        let successful_uploads: Vec<MediaInfo> = results
+            .into_iter()
+            .filter_map(|r| r.ok())
+            .collect();
+        
+        if successful_uploads.is_empty() {
+            Err(TelegraphError::Server)
+        } else {
+            Ok(successful_uploads)
         }
-
-        let r: Result<Vec<MediaInfo>, TelegraphError> = self
-            .client
-            .post_builder("https://telegra.ph/upload")
-            .multipart(form)
-            .send()
-            .await
-            .and_then(Response::error_for_status)?
-            .json::<UploadResult>()
-            .await?
-            .into();
-
-        // Here we check if server returns the same amount as files posted
-        r.and_then(|x| {
-            if x.len() != cnt {
-                Err(TelegraphError::Server)
-            } else {
-                Ok(x)
-            }
-        })
     }
 }
 
